@@ -1,0 +1,76 @@
+version: "3.8"
+
+services:
+  swarm-cd:
+    image: swarm-cd:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      - GIN_MODE=release
+    configs:
+      - source: swarm_cd_config
+        target: /app/config.yaml
+      - source: swarm_cd_repos
+        target: /app/repos.yaml
+      - source: swarm_cd_stacks
+        target: /app/stacks.yaml
+    secrets:
+      - source: op_connect_token
+        target: /app/op_connect_token
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # Required for Docker API access
+      - swarm_cd_data:/app/repos                   # Persistent volume for git repos
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager  # Must run on a manager node to access Docker API
+      restart_policy:
+        condition: on-failure
+    ports:
+      - "${SWARM_CD_PORT:-8080}:8080"  # Web UI port
+    networks:
+      - swarm-cd-net
+
+  # Optional: 1Password Connect server if using 1Password for secrets
+  op-connect:
+    image: 1password/connect-api:latest
+    environment:
+      - OP_SESSION=${OP_SESSION}  # Required for 1Password Connect
+    volumes:
+      - op_connect_data:/home/opuser/.op/data
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+    networks:
+      - swarm-cd-net
+
+volumes:
+  swarm_cd_data:
+    driver: local
+  op_connect_data:
+    driver: local
+
+configs:
+  swarm_cd_config:
+    file: ./config.yaml
+  swarm_cd_repos:
+    file: ./repos.yaml
+  swarm_cd_stacks:
+    file: ./stacks.yaml
+
+secrets:
+  op_connect_token:
+    file: ./op_connect_token.txt  # Create this file with your 1Password Connect token
+
+networks:
+  swarm-cd-net:
+    driver: overlay
+    attachable: true

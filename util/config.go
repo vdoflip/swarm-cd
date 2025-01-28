@@ -23,6 +23,11 @@ type RepoConfig struct {
 	PasswordFile string `mapstructure:"password_file"`
 }
 
+type WebConfig struct {
+	Host string `mapstructure:"host"`
+	Port int    `mapstructure:"port"`
+}
+
 type Config struct {
 	ReposPath            string                  `mapstructure:"repos_path"`
 	UpdateInterval       int                     `mapstructure:"update_interval"`
@@ -30,6 +35,7 @@ type Config struct {
 	StackConfigs         map[string]*StackConfig `mapstructure:"stacks"`
 	RepoConfigs          map[string]*RepoConfig  `mapstructure:"repos"`
 	SopsSecretsDiscovery bool                    `mapstructure:"sops_secrets_discovery"`
+	Web                  *WebConfig              `mapstructure:"web"`
 }
 
 var Configs Config
@@ -62,6 +68,8 @@ func readConfig() (err error) {
 	configViper.SetDefault("repos_path", "repos")
 	configViper.SetDefault("auto_rotate", true)
 	configViper.SetDefault("sops_secrets_discovery", false)
+	configViper.SetDefault("web.host", "localhost")
+	configViper.SetDefault("web.port", 8080)
 	err = configViper.ReadInConfig()
 	if err != nil && !errors.As(err, &viper.ConfigFileNotFoundError{}) {
 		return

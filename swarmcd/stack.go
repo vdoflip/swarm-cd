@@ -22,6 +22,8 @@ type swarmStack struct {
 	sopsFiles       []string
 	valuesFile      string
 	discoverSecrets bool
+	secretManager   string // "sops" or "1password"
+	onepassConfig   *util.OnePasswordConfig
 }
 
 func newSwarmStack(name string, repo *stackRepo, branch string, composePath string, sopsFiles []string, valuesFile string, discoverSecrets bool) *swarmStack {
@@ -33,6 +35,8 @@ func newSwarmStack(name string, repo *stackRepo, branch string, composePath stri
 		sopsFiles:       sopsFiles,
 		valuesFile:      valuesFile,
 		discoverSecrets: discoverSecrets,
+		secretManager:   "sops", // Default to sops for backward compatibility
+		onepassConfig:   nil,    // No 1password config by default
 	}
 }
 
@@ -89,6 +93,14 @@ func (swarmStack *swarmStack) updateStack() (revision string, err error) {
 
 	log.Debug("deploying stack...")
 	err = swarmStack.deployStack()
+	if err != nil {
+		return
+	}
+
+	// Clean up secrets after successful deployment
+	if err = swarmStack.cleanupSecrets(); err != nil {
+		log.Error("failed to cleanup secrets", "error", err)
+	}
 	return
 }
 
@@ -131,17 +143,26 @@ func (swarmStack *swarmStack) parseStackString(stackContent []byte) (map[string]
 }
 
 func (swarmStack *swarmStack) decryptSopsFiles(composeMap map[string]any) (err error) {
-	var sopsFiles []string
-	if !swarmStack.discoverSecrets {
-		sopsFiles = swarmStack.sopsFiles
-	} else {
-		sopsFiles, err = discoverSecrets(composeMap, swarmStack.composePath)
-		if err != nil {
-			return
-		}
+	if swarmStack.secretManager == "1password" {
+		return swarmStack.handle1PasswordSecrets(composeMap)
 	}
+
+	// Original SOPS handling
+	if len(swarmStack.sopsFiles) == 0 && !swarmStack.discoverSecrets {
+		return nil
+	}
+
+	sopsFiles := swarmStack.sopsFiles
+	if swarmStack.discoverSecrets {
+		discovered, err := discoverSecrets(composeMap, swarmStack.composePath)
+		if err != nil {
+			return fmt.Errorf("failed to discover secrets: %w", err)
+		}
+		sopsFiles = append(sopsFiles, discovered...)
+	}
+
 	for _, sopsFile := range sopsFiles {
-		err = util.DecryptFile(path.Join(swarmStack.repo.path, sopsFile))
+		err = util.DecryptSopsFile(path.Join(swarmStack.repo.path, sopsFile))
 		if err != nil {
 			return
 		}
@@ -149,23 +170,75 @@ func (swarmStack *swarmStack) decryptSopsFiles(composeMap map[string]any) (err e
 	return
 }
 
-func discoverSecrets(composeMap map[string]any, composePath string) ([]string, error) {
-	var sopsFiles []string
-	if secrets, ok := composeMap["secrets"].(map[string]any); ok {
-		for secretName, secret := range secrets {
-			secretMap, ok := secret.(map[string]any)
-			if !ok {
-				return nil, fmt.Errorf("invalid compose file: %s secret must be a map", secretName)
-			}
-			secretFile, ok := secretMap["file"].(string)
-			if !ok {
-				return nil, fmt.Errorf("invalid compose file: %s file field must be a string", secretName)
-			}
-			objectDir := path.Join(path.Dir(composePath), secretFile)
-			sopsFiles = append(sopsFiles, objectDir)
+func (swarmStack *swarmStack) handle1PasswordSecrets(composeMap map[string]any) error {
+	if swarmStack.onepassConfig == nil {
+		return fmt.Errorf("1password configuration is required when using 1password secret manager")
+	}
+
+	// Process secrets in the compose file
+	secrets, ok := composeMap["secrets"].(map[string]interface{})
+	if !ok {
+		return nil // No secrets defined
+	}
+
+	secretsDir := path.Join(swarmStack.repo.path, ".secrets")
+	for secretName, secretConfig := range secrets {
+		config, ok := secretConfig.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Check if this secret is managed by 1password
+		onepassRef, ok := config["1password"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		itemID, ok1 := onepassRef["item"].(string)
+		field, ok2 := onepassRef["field"].(string)
+		if !ok1 || !ok2 {
+			return fmt.Errorf("invalid 1password reference for secret %s: requires 'item' and 'field'", secretName)
+		}
+
+		secretRef := util.SecretRef{
+			ItemID: itemID,
+			Field:  field,
+		}
+
+		targetPath := path.Join(secretsDir, secretName)
+		if err := util.FetchOnePasswordSecret(*swarmStack.onepassConfig, secretRef, targetPath); err != nil {
+			return fmt.Errorf("failed to fetch 1password secret %s: %w", secretName, err)
+		}
+
+		// Update the secret configuration to use the file
+		config["file"] = targetPath
+		delete(config, "1password")
+	}
+
+	return nil
+}
+
+func (swarmStack *swarmStack) cleanupSecrets() error {
+	if swarmStack.secretManager != "1password" {
+		return nil
+	}
+
+	secretsDir := path.Join(swarmStack.repo.path, ".secrets")
+	entries, err := os.ReadDir(secretsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read secrets directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if err := util.CleanupOnePasswordSecret(path.Join(secretsDir, entry.Name())); err != nil {
+			return fmt.Errorf("failed to cleanup secret %s: %w", entry.Name(), err)
 		}
 	}
-	return sopsFiles, nil
+
+	return os.Remove(secretsDir)
 }
 
 func (swarmStack *swarmStack) rotateConfigsAndSecrets(composeMap map[string]any) error {
@@ -233,4 +306,23 @@ func (swarmStack *swarmStack) deployStack() error {
 		return fmt.Errorf("could not deploy stack %s: %s", swarmStack.name, err)
 	}
 	return nil
+}
+
+func discoverSecrets(composeMap map[string]any, composePath string) ([]string, error) {
+	var sopsFiles []string
+	if secrets, ok := composeMap["secrets"].(map[string]any); ok {
+		for secretName, secret := range secrets {
+			secretMap, ok := secret.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid compose file: %s secret must be a map", secretName)
+			}
+			secretFile, ok := secretMap["file"].(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid compose file: %s file field must be a string", secretName)
+			}
+			objectDir := path.Join(path.Dir(composePath), secretFile)
+			sopsFiles = append(sopsFiles, objectDir)
+		}
+	}
+	return sopsFiles, nil
 }

@@ -1,0 +1,17 @@
+# Repository configurations
+
+# Example of a public repository
+myapp-repo:
+  url: https://github.com/myorg/myapp.git
+
+# Example of a private repository with username/password
+private-repo:
+  url: https://github.com/myorg/private-app.git
+  username: git-user
+  password: ${GITHUB_TOKEN}  # Use environment variable for token
+
+# Example of a private repository with password file
+secure-repo:
+  url: https://github.com/myorg/secure-app.git
+  username: git-user
+  password_file: /run/secrets/git_token  # Read token from a file

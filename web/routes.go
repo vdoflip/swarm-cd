@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/m-adawi/swarm-cd/util"
 	sloggin "github.com/samber/slog-gin"
@@ -19,5 +20,15 @@ func init() {
 }
 
 func RunServer() {
-	router.Run("localhost:8080")
+	config := util.Configs.Web
+	if config == nil {
+		config = &util.WebConfig{
+			Host: "localhost",
+			Port: 8080,
+		}
+	}
+	
+	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	util.Logger.Info("starting web server", "address", addr)
+	router.Run(addr)
 }

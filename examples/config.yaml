@@ -1,0 +1,18 @@
+# Main configuration file for swarm-cd
+
+# Path where git repositories will be cloned
+repos_path: repos
+
+# How often to check for updates (in seconds)
+update_interval: 120
+
+# Automatically rotate secrets and configs when changed
+auto_rotate: true
+
+# Web UI configuration
+web:
+  host: "0.0.0.0"  # Listen on all interfaces
+  port: 8080       # Web UI port
+
+# Global SOPS configuration (when using SOPS)
+sops_secrets_discovery: false  # Set to true to automatically discover SOPS files

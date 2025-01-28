@@ -8,7 +8,7 @@ import (
 	"github.com/getsops/sops/v3/decrypt"
 )
 
-func DecryptFile(filepath string) (err error) {
+func DecryptSopsFile(filepath string) (err error) {
 	format := getFileFormat(filepath)
 	textBytes, err := decrypt.File(filepath, format)
 	if err != nil {

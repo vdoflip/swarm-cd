@@ -1,0 +1,29 @@
+# Stack configurations
+
+# Example stack using SOPS for secrets
+webapp:
+  repo: myapp-repo
+  branch: main
+  compose_file: docker-compose.yml
+  sops_files:
+    - secrets/production.yaml
+    - secrets/certificates.yaml
+  sops_secrets_discovery: true
+
+# Example stack using 1Password for secrets
+secure-app:
+  repo: secure-repo
+  branch: production
+  compose_file: compose/app.yml
+  secret_manager: 1password
+  onepassword:
+    connect_host: http://op-connect:8080
+    connect_token: ${OP_CONNECT_TOKEN}
+    vault: secure-app
+
+# Example stack with value templating
+templated-app:
+  repo: private-repo
+  branch: staging
+  compose_file: docker-compose.yml
+  values_file: values/staging.yaml  # Values for template substitution

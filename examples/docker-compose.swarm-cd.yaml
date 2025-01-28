@@ -15,9 +15,6 @@ services:
         target: /app/repos.yaml
       - source: swarm_cd_stacks
         target: /app/stacks.yaml
-    secrets:
-      - source: op_connect_token
-        target: /app/op_connect_token
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Required for Docker API access
       - swarm_cd_data:/app/repos                   # Persistent volume for git repos
@@ -34,12 +31,34 @@ services:
     networks:
       - swarm-cd-net
 
-  # Optional: 1Password Connect server if using 1Password for secrets
-  op-connect:
+  # 1Password Connect API server
+  op-connect-api:
     image: 1password/connect-api:latest
-    environment:
-      - OP_SESSION=${OP_SESSION}  # Required for 1Password Connect
     volumes:
+      - type: bind
+        source: ./1password-credentials.json
+        target: /home/opuser/.op/1password-credentials.json
+        read_only: true
+      - op_connect_data:/home/opuser/.op/data
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+    networks:
+      - swarm-cd-net
+
+  # 1Password Connect Sync server
+  op-connect-sync:
+    image: 1password/connect-sync:latest
+    volumes:
+      - type: bind
+        source: ./1password-credentials.json
+        target: /home/opuser/.op/1password-credentials.json
+        read_only: true
       - op_connect_data:/home/opuser/.op/data
     deploy:
       mode: replicated
@@ -65,10 +84,6 @@ configs:
     file: ./repos.yaml
   swarm_cd_stacks:
     file: ./stacks.yaml
-
-secrets:
-  op_connect_token:
-    file: ./op_connect_token.txt  # Create this file with your 1Password Connect token
 
 networks:
   swarm-cd-net:
